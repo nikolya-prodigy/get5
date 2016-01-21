@@ -51,6 +51,11 @@ public Action MatchLive(Handle timer) {
     ConVar tv_delay = FindConVar("tv_delay");
     SetConVarInt(mp_match_restart_delay, tv_delay.IntValue + MATCH_END_DELAY_AFTER_TV + 5);
 
+    // Force kill the warmup if we (still) need to.
+    if (InWarmup()) {
+        EndWarmup();
+    }
+
     ChangeState(GameState_Live);
 
     for (int i = 0; i < 5; i++) {

@@ -95,6 +95,7 @@ char g_DemoFileName[PLATFORM_MAX_PATH];
 bool g_MapChangePending = false;
 bool g_MovingClientToCoach[MAXPLAYERS+1];
 bool g_PendingSideSwap = false;
+bool g_PlayerJoinDuringSwap[MAXPLAYERS+1];
 
 Handle g_KnifeChangedCvars = INVALID_HANDLE;
 
@@ -136,7 +137,7 @@ public void OnPluginStart() {
     g_AutoLoadConfigCvar = CreateConVar("get5_autoload_config", "", "");
     g_DemoNameFormatCvar = CreateConVar("get5_demo_name_format", "{MATCHID}_map{MAPNUMBER}_{MAPNAME}");
     g_DemoTimeFormatCvar = CreateConVar("get5_time_format", "%Y-%m-%d_%H", "Time format to use when creating demo file names. Don't tweak this unless you know what you're doing! Avoid using spaces or colons.");
-    g_KickClientsWithNoMatchCvar = CreateConVar("get5_kick_when_no_match_loaded", "0", "Whether the plugin kicks new clients when no match is loaded");
+    g_KickClientsWithNoMatchCvar = CreateConVar("get5_kick_when_no_match_loaded", "1", "Whether the plugin kicks new clients when no match is loaded");
     g_LiveCfgCvar = CreateConVar("get5_live_cfg", "get5/live.cfg", "Config file to exec when the game goes live");
     g_PausingEnabledCvar = CreateConVar("get5_pausing_enabled", "1", "Whether pausing is allowed.");
     g_WaitForSpecReadyCvar = CreateConVar("get5_wait_for_spec_ready", "0", "Whether to wait for spectators to ready up if there are any");
@@ -167,19 +168,22 @@ public void OnPluginStart() {
     RegAdminCmd("get5_addplayer", Command_AddPlayer, ADMFLAG_CHANGEMAP, "Adds a steamid to a match team");
     RegAdminCmd("get5_removeplayer", Command_RemovePlayer, ADMFLAG_CHANGEMAP, "Adds a steamid to a match team");
     RegAdminCmd("get5_creatematch", Command_CreateMatch, ADMFLAG_CHANGEMAP, "Creates and loads a match using the players currently on the server as a Bo1 with the current map");
+    RegAdminCmd("get5_forcestart", Command_ForceStart, ADMFLAG_CHANGEMAP, "");
 
     /** Other commands **/
     RegConsoleCmd("get5_status", Command_Status, "Prints JSON formatted match state info");
     RegServerCmd("get5_test", Command_Test, "Runs get5 tests - should not be used on a live match server since it will reload a match config to test");
 
     /** Hooks **/
-    HookEvent("player_spawn", Event_PlayerSpawn);
+    HookEvent("player_spawn", Event_PlayerSpawnPre, EventHookMode_Pre);
+    HookEvent("player_spawn", Event_PlayerSpawnPost, EventHookMode_Post);
     HookEvent("cs_win_panel_match", Event_MatchOver);
     HookEvent("round_prestart", Event_RoundPreStart);
     HookEvent("round_end", Event_RoundEnd);
     HookEvent("server_cvar", Event_CvarChanged, EventHookMode_Pre);
     HookEvent("player_connect_full", Event_PlayerConnectFull);
     HookEvent("player_team", Event_OnPlayerTeam, EventHookMode_Pre);
+    HookEvent("round_prestart", Event_RoundPostStart);
     AddCommandListener(Command_Coach, "coach");
     AddCommandListener(Command_JoinTeam, "jointeam");
     AddCommandListener(Command_JoinGame, "joingame");
@@ -229,6 +233,7 @@ public Action Timer_InfoMessages(Handle timer) {
 
 public void OnClientAuthorized(int client, const char[] auth) {
     g_MovingClientToCoach[client] = false;
+    g_PlayerJoinDuringSwap[client] = false;
     if (StrEqual(auth, "BOT", false)) {
         return;
     }
@@ -237,14 +242,16 @@ public void OnClientAuthorized(int client, const char[] auth) {
         KickClient(client, "There is no match setup");
     }
 
+    if (g_PendingSideSwap) {
+        g_PlayerJoinDuringSwap[client] = true;
+    }
+
     if (g_GameState != GameState_None) {
         MatchTeam team = GetClientMatchTeam(client);
         if (team == MatchTeam_TeamNone) {
             KickClient(client, "You are not a player in this match");
         }
     }
-
-    // TODO: if team full (and coaching disabled) kick the client
 }
 
 public void OnClientPutInServer(int client) {
@@ -461,6 +468,14 @@ public Action Command_LoadMatchUrl(int client, int args) {
     return Plugin_Handled;
 }
 
+public Action Command_ForceStart(int client, int args) {
+    Get5_MessageToAll("An admin force-readied the teams.");
+    for (int i = 0; i < view_as<int>(MatchTeam_Count); i++) {
+        g_TeamReady[i] = true;
+    }
+    return Plugin_Handled;
+}
+
 
 /***********************
  *                     *
@@ -468,7 +483,16 @@ public Action Command_LoadMatchUrl(int client, int args) {
  *                     *
  ***********************/
 
-public Action Event_PlayerSpawn(Event event, const char[] name, bool dontBroadcast) {
+public Action Event_PlayerSpawnPre(Event event, const char[] name, bool dontBroadcast) {
+    if (g_GameState == GameState_Live) {
+        int client = GetClientOfUserId(event.GetInt("userid"));
+        if (IsAuthedPlayer(client)) {
+            EnforceTeam(client);
+        }
+    }
+}
+
+public Action Event_PlayerSpawnPost(Event event, const char[] name, bool dontBroadcast) {
     if (g_GameState < GameState_KnifeRound) {
         int client = GetClientOfUserId(event.GetInt("userid"));
         if (IsPlayer(client) && OnActiveTeam(client)) {
@@ -650,6 +674,10 @@ public Action Event_CvarChanged(Event event, const char[] name, bool dontBroadca
     }
 
     return Plugin_Continue;
+}
+
+public Action Event_RoundPostStart(Event event, const char[] name, bool dontBroadcast) {
+    EnforceCoachTeams();
 }
 
 public void StartGame(bool knifeRound) {

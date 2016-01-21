@@ -1,100 +1,63 @@
+public void EnforceClientTeams() {
+    LogDebug("EnforceClientTeams");
+    for (int i = 1; i <= MaxClients; i++) {
+        if (IsAuthedPlayer(i)) {
+            EnforceTeam(i);
+        }
+    }
+}
+
+public void EnforceCoachTeams() {
+    LogDebug("EnforceCoachTeams");
+    for (int i = 1; i <= MaxClients; i++) {
+        if (IsAuthedPlayer(i) && IsClientCoaching(i)) {
+            MoveClientToCoach(i);
+        }
+    }
+}
+
+public void EnforceTeam(int client) {
+    LogDebug("EnforceTeam %L", client);
+    MatchTeam correctTeam = GetClientMatchTeam(client);
+    int csTeam = MatchTeamToCSTeam(correctTeam);
+
+    if (GetClientTeam(client) != csTeam) {
+        if (IsClientCoaching(client)) {
+            UpdateCoachTarget(client, csTeam);
+        } else {
+            if (CountPlayersOnCSTeam(csTeam) >= g_PlayersPerTeam) {
+                MoveClientToCoach(client);
+            } else {
+                SwitchPlayerTeam(client, csTeam);
+            }
+        }
+    }
+}
+
 public Action Command_JoinGame(int client, const char[] command, int argc) {
     if (g_GameState == GameState_None) {
         return Plugin_Continue;
     }
-
-    // TODO: if we want to bypass the teammenu, this is probably the best
-    // place to put the player onto a team.
-    // if (IsPlayer(client)) {
-    //     FakeClientCommand(client, "jointeam 2");
-    // }
-
+    EnforceTeam(client);
     return Plugin_Continue;
 }
 
-// public void CheckClientTeam(int client) {
-//     MatchTeam correctTeam = GetClientMatchTeam(client);
-//     int csTeam = MatchTeamToCSTeam(correctTeam);
-//     int currentTeam = GetClientTeam(client);
-
-//     if (csTeam != currentTeam) {
-//         if (IsClientCoaching(client)) {
-//             UpdateCoachTarget(client, csTeam);
-//         }
-
-//         LogDebug("CheckClientTeam %L to %d", client, csTeam);
-//         SwitchPlayerTeam(client, csTeam);
-//     }
-// }
-
 public Action Command_JoinTeam(int client, const char[] command, int argc) {
-    if (!IsAuthedPlayer(client) || argc < 1)
-        return Plugin_Stop;
-
     // Don't do anything if not live/not in startup phase.
     if (g_GameState == GameState_None) {
         return Plugin_Continue;
-    }
-
-    char arg[4];
-    GetCmdArg(1, arg, sizeof(arg));
-    int team_to = StringToInt(arg);
-
-    LogDebug("%L jointeam command, from %d to %d", client, GetClientTeam(client), team_to);
-
-    // don't let someone change to a "none" team (e.g. using auto-select)
-    if (team_to == CS_TEAM_NONE) {
-        return Plugin_Stop;
-    }
-
-    MatchTeam correctTeam = GetClientMatchTeam(client);
-    int csTeam = MatchTeamToCSTeam(correctTeam);
-
-    LogDebug("jointeam, gamephase = %d", GetGamePhase());
-
-    if (g_PendingSideSwap) {
-        LogDebug("Blocking teamjoin due to pending swap");
-        // SwitchPlayerTeam(client, csTeam);
-        return Plugin_Handled;
-    }
-
-    if (csTeam == team_to) {
-        return Plugin_Continue;
-    }
-
-    if (csTeam != GetClientTeam(client)) {
-        // SwitchPlayerTeam(client, csTeam);
-        if (CountPlayersOnCSTeam(csTeam) >= g_PlayersPerTeam) {
-            LogDebug("Forcing player %N to coach", client);
-            MoveClientToCoach(client);
-            Get5_Message(client, "Because your team is full, you were moved to the coach position.");
-        } else {
-            LogDebug("Forcing player %N onto %d", client, csTeam);
-            FakeClientCommand(client, "jointeam %d", csTeam);
-        }
-
-        return Plugin_Stop;
     }
 
     return Plugin_Stop;
 }
 
 public void MoveClientToCoach(int client) {
-    LogDebug("MoveClientToCoach %L", client);
     MatchTeam matchTeam = GetClientMatchTeam(client);
     if (matchTeam != MatchTeam_Team1 && matchTeam != MatchTeam_Team2) {
         return;
     }
 
     int csTeam = MatchTeamToCSTeam(matchTeam);
-
-    if (g_PendingSideSwap) {
-        LogDebug("Blocking coach move due to pending swap");
-        // SwitchPlayerTeam(client, CS_TEAM_SPECTATOR);
-        // UpdateCoachTarget( client, csTeam);
-        return;
-    }
-
     char teamString[4];
     CSTeamString(csTeam, teamString, sizeof(teamString));
 
@@ -102,8 +65,6 @@ public void MoveClientToCoach(int client) {
     // coaching command. Otherwise we manually move them to spec
     // and set the coaching target.
     if (!InWarmup() && !InFreezeTime()) {
-        // TODO: this needs to be tested more thoroughly,
-        // it might need to be done in reverse order (?)
         SwitchPlayerTeam(client, CS_TEAM_SPECTATOR);
         UpdateCoachTarget(client, csTeam);
     } else {
@@ -131,6 +92,7 @@ public Action Command_Coach(int client, const char[] command, int argc) {
         return Plugin_Continue;
     }
 
+    // TODO: add a way to leave the coach spot
     MoveClientToCoach(client);
     return Plugin_Stop;
 }

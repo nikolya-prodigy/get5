@@ -52,6 +52,11 @@ stock void SwitchPlayerTeam(int client, int team) {
 
     LogDebug("SwitchPlayerTeam %L to %d", client, team);
     if (team > CS_TEAM_SPECTATOR) {
+        // TODO: there should be a way to not need this since it changes
+        // the client's score.
+        if (IsPlayerAlive(client))
+            ForcePlayerSuicide(client);
+
         CS_SwitchTeam(client, team);
         CS_UpdateClientModel(client);
         CS_RespawnPlayer(client);

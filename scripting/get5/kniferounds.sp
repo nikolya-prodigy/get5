@@ -7,6 +7,10 @@ public Action StartKnifeRound(Handle timer) {
 }
 
 public Action Timer_AnnounceKnife(Handle timer) {
+    if (g_GameState != GameState_KnifeRound) {
+        return Plugin_Handled;
+    }
+
     EndWarmup();
     for (int i = 0; i < 5; i++)
         Get5_MessageToAll("Knife!");
